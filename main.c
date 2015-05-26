@@ -80,10 +80,8 @@ static uchar    idleRate;           /* in 4 ms units */
 static uchar    newReport = 0;		/* current report */
 
 static uchar    buttonState_B1 = 3;		/*  stores state of button 0 */
-static uchar    buttonState_B2 = 3;		/*  stores state of button 1 */
 
 static uchar    buttonChanged_B1;		
-static uchar    buttonChanged_B2;		
 
 static uchar	debounceTimeIsOver = 1;	/* for switch debouncing */
 static uchar	scrollCount = 0;
@@ -129,79 +127,6 @@ PROGMEM char usbHidReportDescriptor[USB_CFG_HID_REPORT_DESCRIPTOR_LENGTH] = {
     0x81, 0x00,                    //   INPUT (Data,Ary,Abs)	** Key arrays (6 bytes) **
     0xc0                           // END_COLLECTION  
 };
- 
-static void timerPoll(void){
-	static unsigned int timerCnt;
-	uchar other = 0;
-    if(TIFR & (1 << TOV1)){
-        TIFR = (1 << TOV1); /* clear overflow */
-        if(++timerCnt >= 32){       // 5/63 sec delay for switch debouncing
-			timerCnt = 0;
-			debounceTimeIsOver = 1; 
-			
-			if(other == 0){
-				if(scrollCount < 0)	scrollCount--;
-				other = 1;
-			} else{
-				other = 0;
-			}
-        }
-    }
-}
-
-static void buildReport(void){
-	
-	uchar key; 
-
-	if(newReport == 0){	
-		if (buttonChanged_B1 == 1){
-        	if (buttonState_B1 != 0){ // if button 1 is released
-				key = 0; //button released event
-			} 
-			else { //if button 1 is pressed
-				key = 30; // key = '1'
-	    	}
-			buttonChanged_B1 = 0;
-			reportBuffer[2] = key;
-		}
-
-
-		if (buttonChanged_B2 == 1){
-        	if (buttonState_B2 != 0){ // if button 2 is pressed
-				key = 0; //button released event
-			} 
-			else {
-				key = 31;  // key = '2'
-			}
-			buttonChanged_B2 = 0;
-    		reportBuffer[3] = key;
-    	}
-	
-		newReport = 1;; //if no button has changed, the previous report will be sent
-	}
-}
-
-static void checkButtonChange(void) {
-	
-	uchar tempButtonValue_B1 = bit_is_set(BUTTON_PIN_B1, BUTTON_BIT_B1); //status of switch is stored in tempButtonValue 
-	uchar tempButtonValue_B2 = bit_is_set(BUTTON_PIN_B2, BUTTON_BIT_B2); //status of switch is stored in tempButtonValue  
-
-	if (tempButtonValue_B1 != buttonState_B1){ //if status has changed
-		buttonState_B1 = tempButtonValue_B1;	// change buttonState to new state
-		debounceTimeIsOver = 0;	// debounce timer starts
-		newReport = 0; // initiate new report 
-		buttonChanged_B1 = 1;
-	}
-	if (tempButtonValue_B2 != buttonState_B2){ //if status has changed
-		buttonState_B2 = tempButtonValue_B2;	// change buttonState to new state
-		debounceTimeIsOver = 0;	// debounce timer starts
-		newReport = 0; // initiate new report 
-		buttonChanged_B2 = 1;
-	}
-
-}
-
-/* ------------------------------------------------------------------------- */
 
 static void timerInit(void)
 {
@@ -219,7 +144,6 @@ usbRequest_t    *rq = (void *)data;
     if((rq->bmRequestType & USBRQ_TYPE_MASK) == USBRQ_TYPE_CLASS){    /* class request type */
         if(rq->bRequest == USBRQ_HID_GET_REPORT){  /* wValue: ReportType (highbyte), ReportID (lowbyte) */
             /* we only have one report type, so don't look at wValue */
-            buildReport();
             return sizeof(reportBuffer);
         }
 		else if(rq->bRequest == USBRQ_HID_SET_REPORT){
@@ -248,14 +172,10 @@ usbMsgLen_t usbFunctionWrite(uint8_t * data, uchar len) {
     else
         LED_state = data[0];
         
-    // LED state changed
-    if(LED_state & SCROLL_LOCK)
-        //PORTB |= 1 << PB3; // LED on
-		scrollCount++;
-    //else
-        //PORTB &= ~(1 << PB3); // LED off
+    if(LED_state & SCROLL_LOCK)	
+        scrollCount++;
         
-    return 1; // Data read, not expecting more
+    return 1;
 }
 
 static void calibrateOscillator(void){
@@ -324,7 +244,6 @@ uchar   calibrationValue;
 	
 	/* turn on internal pull-up resistor for the switches */
     BUTTON_PORT_B1 |= _BV(BUTTON_BIT_B1);
-	BUTTON_PORT_B2 |= _BV(BUTTON_BIT_B2);
 	
     timerInit();
     sei();
@@ -332,10 +251,6 @@ uchar   calibrationValue;
     for(;;){    /* main event loop */
         wdt_reset();
         usbPoll();
-		
-//		if (debounceTimeIsOver == 1){
-//			checkButtonChange();
-//		}
 
 		if(bit_is_set(BUTTON_PIN_B1, BUTTON_BIT_B1) == 0){
 			PORTB &= ~(1 << PB3); // LED off
@@ -343,7 +258,6 @@ uchar   calibrationValue;
 		}
 		
 		if(usbInterruptIsReady() && newReport == 0){ /* we can send another report */
-        	buildReport();
            	usbSetInterrupt(reportBuffer, sizeof(reportBuffer));
         }
 		if(scrollCount > 2){
@@ -351,14 +265,8 @@ uchar   calibrationValue;
 				PORTB |= 1 << PB3; // LED on
 				ledState = 1;
 			}
-			else{			
-				PORTB &= ~(1 << PB3); // LED off
-				ledState = 0;
-			}
 			scrollCount = 0;
 		}
-        		
-		timerPoll();
 	}
    	return 0;
 }
